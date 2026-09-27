@@ -35,7 +35,7 @@ spec:
 
         - name: backend
 
-          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-south-2.amazonaws.com/nutriflow-backend:latest
+          image: 599499159844.dkr.ecr.ap-south-2.amazonaws.com/nutriflow-backend:7
 
           ports:
             - containerPort: 8000
