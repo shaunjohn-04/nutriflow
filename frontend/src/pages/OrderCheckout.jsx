@@ -60,7 +60,7 @@ const OrderCheckout = ({ setActiveTab, onOpenOTP, cartItems = [], cartQuantities
     }, 3000)
   }
 
-const API_BASE = `${import.meta.env.VITE_API_URL || 'http://localhost:8000/nutriflow'}`
+const API_BASE = `${import.meta.env.VITE_API_URL || '/nutriflow'}`
 
   const checkAuthToken = () => {
     return localStorage.getItem('nutriflow_token') || localStorage.getItem('token') || localStorage.getItem('auth_token')

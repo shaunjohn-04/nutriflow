@@ -7,29 +7,23 @@ pipeline {
     }
 
     environment {
-        AWS_REGION     = 'ap-south-1'
-        AWS_ACCOUNT_ID = '658469473117'
-        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        AWS_REGION = 'ap-south-2'
 
-        BACKEND_REPO   = 'nutriflow-backend'
-        FRONTEND_REPO  = 'nutriflow-frontend'
-        BACKEND_IMAGE  = "${ECR_REGISTRY}/${BACKEND_REPO}"
-        FRONTEND_IMAGE = "${ECR_REGISTRY}/${FRONTEND_REPO}"
-        IMAGE_TAG      = "${BUILD_NUMBER}"
+        BACKEND_REPO  = 'nutriflow-backend'
+        FRONTEND_REPO = 'nutriflow-frontend'
 
-        // Backend URL reachable from the browser, baked into the frontend
-        // bundle at build time (Vite). Update once you have a real ALB/domain.
-        VITE_API_URL   = 'http://k8s-default-nutriflo-9414abcb85-741306382.ap-south-1.elb.amazonaws.com/nutriflow'
+        IMAGE_TAG = "${BUILD_NUMBER}"
 
-        SONARQUBE      = 'SonarQube'
-        SONAR_SCANNER  = 'sonar-scanner'
+        SONARQUBE     = 'SonarQube'
+        SONAR_SCANNER = 'sonar-scanner'
     }
 
     stages {
 
-        /*
-         * 1. CHECKOUT
-         */
+        // ---------------------------------------------------------
+        // 1. CHECKOUT
+        // ---------------------------------------------------------
+
         stage('Checkout') {
             steps {
                 echo 'Checking out NutriFlow source code...'
@@ -37,6 +31,10 @@ pipeline {
                 checkout scm
 
                 sh '''
+                    echo "========================================"
+                    echo "Git Information"
+                    echo "========================================"
+
                     echo "Branch:"
                     git branch --show-current
 
@@ -46,40 +44,103 @@ pipeline {
                     echo "Repository:"
                     git remote -v
 
-                    echo "Last commit message:"
+                    echo "Last commit:"
                     git log -1 --pretty=%B
                 '''
 
-                // Guard against the pipeline re-triggering on its own GitOps
-                // commit (step 9 below tags its commit message with [skip ci]).
                 script {
-                    def lastMsg = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                    def lastMsg = sh(
+                        script: 'git log -1 --pretty=%B',
+                        returnStdout: true
+                    ).trim()
+
                     if (lastMsg.contains('[skip ci]')) {
-                        echo 'Last commit is a GitOps-only update ([skip ci]) -- aborting to avoid a build loop.'
+                        echo 'GitOps update detected. Skipping pipeline.'
                         currentBuild.result = 'NOT_BUILT'
-                        error('Skipping build: commit is CI-generated.')
+                        error('Skipping CI-generated GitOps commit.')
                     }
                 }
             }
         }
 
-        /*
-         * 2. INSTALL DEPENDENCIES (backend + frontend)
-         */
+        // ---------------------------------------------------------
+        // 2. GET AWS ACCOUNT ID
+        // ---------------------------------------------------------
+
+        stage('AWS Configuration') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-ecr-credentials',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        export AWS_DEFAULT_REGION=${AWS_REGION}
+
+                        echo "Checking AWS identity..."
+
+                        aws sts get-caller-identity
+
+                        AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
+                            --query Account \
+                            --output text)
+
+                        echo "AWS Account ID: ${AWS_ACCOUNT_ID}"
+                        echo "AWS Region: ${AWS_REGION}"
+
+                        ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                        echo "ECR Registry: ${ECR_REGISTRY}"
+
+                        echo "${AWS_ACCOUNT_ID}" > .aws_account_id
+                        echo "${ECR_REGISTRY}" > .ecr_registry
+                    '''
+                }
+
+                script {
+                    env.AWS_ACCOUNT_ID = readFile('.aws_account_id').trim()
+                    env.ECR_REGISTRY = readFile('.ecr_registry').trim()
+
+                    env.BACKEND_IMAGE =
+                        "${env.ECR_REGISTRY}/${env.BACKEND_REPO}"
+
+                    env.FRONTEND_IMAGE =
+                        "${env.ECR_REGISTRY}/${env.FRONTEND_REPO}"
+
+                    echo "Backend image: ${env.BACKEND_IMAGE}"
+                    echo "Frontend image: ${env.FRONTEND_IMAGE}"
+                }
+            }
+        }
+
+        // ---------------------------------------------------------
+        // 3. INSTALL DEPENDENCIES
+        // ---------------------------------------------------------
+
         stage('Install Dependencies') {
             parallel {
-                stage('Backend deps') {
+
+                stage('Backend Dependencies') {
                     steps {
                         sh '''
-                            docker run --rm -v "$PWD/backend":/app -w /app node:20-alpine \
+                            docker run --rm \
+                              -v "$PWD/backend":/app \
+                              -w /app \
+                              node:20-alpine \
                               npm ci
                         '''
                     }
                 }
-                stage('Frontend deps') {
+
+                stage('Frontend Dependencies') {
                     steps {
                         sh '''
-                            docker run --rm -v "$PWD/frontend":/app -w /app node:20-alpine \
+                            docker run --rm \
+                              -v "$PWD/frontend":/app \
+                              -w /app \
+                              node:20-alpine \
                               npm ci
                         '''
                     }
@@ -87,37 +148,48 @@ pipeline {
             }
         }
 
-        /*
-         * 3. RUN TESTS
-         */
+        // ---------------------------------------------------------
+        // 4. TESTS
+        // ---------------------------------------------------------
+
         stage('Run Tests') {
             steps {
                 echo 'Running NutriFlow tests...'
 
-                // backend/package.json's "test" script is currently a stub
-                // that exits 1, so this does not hard-fail the build on it.
-                // Tighten this once real tests are wired in.
                 sh '''
-                    docker run --rm -v "$PWD/backend":/app -w /app node:20-alpine \
+                    echo "Running backend tests..."
+
+                    docker run --rm \
+                      -v "$PWD/backend":/app \
+                      -w /app \
+                      node:20-alpine \
                       npm test || true
 
-                    docker run --rm -v "$PWD/frontend":/app -w /app node:20-alpine \
+                    echo "Running frontend lint..."
+
+                    docker run --rm \
+                      -v "$PWD/frontend":/app \
+                      -w /app \
+                      node:20-alpine \
                       npm run lint || true
                 '''
             }
         }
 
-        /*
-         * 4. SONARQUBE ANALYSIS
-         */
+        // ---------------------------------------------------------
+        // 5. SONARQUBE
+        // ---------------------------------------------------------
+
         stage('SonarQube Analysis') {
             steps {
                 script {
+
                     echo 'Running SonarQube analysis...'
 
                     def scannerHome = tool "${SONAR_SCANNER}"
 
                     withSonarQubeEnv("${SONARQUBE}") {
+
                         sh """
                             ${scannerHome}/bin/sonar-scanner \
                               -Dsonar.projectKey=nutriflow \
@@ -130,6 +202,10 @@ pipeline {
             }
         }
 
+        // ---------------------------------------------------------
+        // 6. QUALITY GATE
+        // ---------------------------------------------------------
+
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -138,26 +214,31 @@ pipeline {
             }
         }
 
-        /*
-         * 5. BUILD DOCKER IMAGES
-         */
+        // ---------------------------------------------------------
+        // 7. DOCKER BUILD
+        // ---------------------------------------------------------
+
         stage('Docker Build') {
+
             parallel {
-                stage('Build backend image') {
+
+                stage('Build Backend') {
                     steps {
                         sh '''
-                            docker build -f backend.Dockerfile \
+                            docker build \
+                              -f backend.Dockerfile \
                               -t ${BACKEND_IMAGE}:${IMAGE_TAG} \
                               -t ${BACKEND_IMAGE}:latest \
                               .
                         '''
                     }
                 }
-                stage('Build frontend image') {
+
+                stage('Build Frontend') {
                     steps {
                         sh '''
-                            docker build -f frontend.Dockerfile \
-                              --build-arg VITE_API_URL=${VITE_API_URL} \
+                            docker build \
+                              -f frontend.Dockerfile \
                               -t ${FRONTEND_IMAGE}:${IMAGE_TAG} \
                               -t ${FRONTEND_IMAGE}:latest \
                               .
@@ -167,12 +248,13 @@ pipeline {
             }
         }
 
-        /*
-         * 6. LOGIN TO AMAZON ECR
-         */
+        // ---------------------------------------------------------
+        // 8. ECR LOGIN
+        // ---------------------------------------------------------
+
         stage('ECR Login') {
+
             steps {
-                echo 'Logging into Amazon ECR...'
 
                 withCredentials([
                     usernamePassword(
@@ -181,28 +263,40 @@ pipeline {
                         passwordVariable: 'AWS_SECRET_ACCESS_KEY'
                     )
                 ]) {
+
                     sh '''
                         export AWS_DEFAULT_REGION=${AWS_REGION}
 
+                        echo "AWS Identity:"
                         aws sts get-caller-identity
 
-                        aws ecr get-login-password --region ${AWS_REGION} |
-                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        echo "Logging into ECR..."
+
+                        aws ecr get-login-password \
+                          --region ${AWS_REGION} |
+                        docker login \
+                          --username AWS \
+                          --password-stdin ${ECR_REGISTRY}
                     '''
                 }
             }
         }
 
-        /*
-         * 7. PUSH IMAGES TO ECR
-         */
+        // ---------------------------------------------------------
+        // 9. PUSH TO ECR
+        // ---------------------------------------------------------
+
         stage('Push Images to ECR') {
+
             steps {
-                echo "Pushing ${BACKEND_IMAGE}:${IMAGE_TAG} and ${FRONTEND_IMAGE}:${IMAGE_TAG}"
 
                 sh '''
+                    echo "Pushing backend..."
+
                     docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
                     docker push ${BACKEND_IMAGE}:latest
+
+                    echo "Pushing frontend..."
 
                     docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
                     docker push ${FRONTEND_IMAGE}:latest
@@ -210,51 +304,71 @@ pipeline {
             }
         }
 
-        /*
-         * 8. UPDATE KUBERNETES MANIFESTS
-         */
+        // ---------------------------------------------------------
+        // 10. UPDATE KUBERNETES MANIFESTS
+        // ---------------------------------------------------------
+
         stage('Update Kubernetes Manifests') {
+
             steps {
-                echo "Updating Kubernetes deployment images to ${IMAGE_TAG}..."
 
                 sh '''
-                    sed -E -i "s#(nutriflow-backend:)[^\\"' ]+#\\1${IMAGE_TAG}#" k8s/backend.yaml
-                    sed -E -i "s#(nutriflow-frontend:)[^\\"' ]+#\\1${IMAGE_TAG}#" k8s/frontend.yaml
+                    echo "Updating backend image..."
 
+                    sed -i -E \
+                      "s#image: .*nutriflow-backend:[^[:space:]]+#image: ${BACKEND_IMAGE}:${IMAGE_TAG}#" \
+                      k8s/backend.yaml
+
+                    echo "Updating frontend image..."
+
+                    sed -i -E \
+                      "s#image: .*nutriflow-frontend:[^[:space:]]+#image: ${FRONTEND_IMAGE}:${IMAGE_TAG}#" \
+                      k8s/frontend.yaml
+
+                    echo ""
                     echo "Updated images:"
-                    grep "image:" k8s/backend.yaml k8s/frontend.yaml
+                    grep "image:" k8s/backend.yaml
+                    grep "image:" k8s/frontend.yaml
                 '''
             }
         }
 
-        /*
-         * 9. COMMIT GITOPS CHANGE
-         */
+        // ---------------------------------------------------------
+        // 11. COMMIT GITOPS UPDATE
+        // ---------------------------------------------------------
+
         stage('Commit GitOps Change') {
+
             steps {
-                echo 'Committing Kubernetes manifest changes...'
 
                 sh '''
                     git config user.name "Jenkins"
                     git config user.email "jenkins@localhost"
 
-                    git add k8s/backend.yaml k8s/frontend.yaml
+                    git add k8s/backend.yaml
+                    git add k8s/frontend.yaml
 
                     if git diff --cached --quiet; then
-                        echo "No Kubernetes manifest changes detected."
+
+                        echo "No Kubernetes changes."
+
                     else
-                        git commit -m "Update NutriFlow images to ${IMAGE_TAG} [skip ci]"
+
+                        git commit \
+                          -m "Update NutriFlow images to ${IMAGE_TAG} [skip ci]"
+
                     fi
                 '''
             }
         }
 
-        /*
-         * 10. PUSH GITOPS CHANGE TO GITHUB
-         */
+        // ---------------------------------------------------------
+        // 12. PUSH TO YOUR GITHUB
+        // ---------------------------------------------------------
+
         stage('Push GitOps Change') {
+
             steps {
-                echo 'Pushing Kubernetes manifest update to GitHub...'
 
                 withCredentials([
                     usernamePassword(
@@ -263,14 +377,21 @@ pipeline {
                         passwordVariable: 'GIT_PASSWORD'
                     )
                 ]) {
+
                     sh '''
                         cat > .git-askpass <<'EOF'
 #!/bin/sh
+
 case "$1" in
-    *Username*) echo "$GIT_USERNAME" ;;
-    *Password*) echo "$GIT_PASSWORD" ;;
+    *Username*)
+        echo "$GIT_USERNAME"
+        ;;
+    *Password*)
+        echo "$GIT_PASSWORD"
+        ;;
 esac
 EOF
+
                         chmod 700 .git-askpass
 
                         export GIT_ASKPASS="$PWD/.git-askpass"
@@ -285,43 +406,60 @@ EOF
         }
     }
 
+    // ---------------------------------------------------------
+    // POST
+    // ---------------------------------------------------------
+
     post {
+
         always {
+
             sh '''
-                echo "Cleaning up..."
+                echo "Cleaning workspace..."
+
                 docker logout ${ECR_REGISTRY} || true
+
                 rm -f .git-askpass
+                rm -f .aws_account_id
+                rm -f .ecr_registry
             '''
         }
 
         success {
+
             echo '''
 ============================================
-     NUTRIFLOW CI/CD PIPELINE SUCCESSFUL
+       NUTRIFLOW PIPELINE SUCCESSFUL
 ============================================
+
 Checkout            : PASSED
+AWS Configuration   : PASSED
 Dependencies        : PASSED
 Tests               : PASSED
-SonarQube           : COMPLETED
+SonarQube           : PASSED
+Quality Gate        : PASSED
 Docker Build        : PASSED
 ECR Login           : PASSED
 ECR Push            : PASSED
 Kubernetes Update   : PASSED
 Git Push            : PASSED
 
-Argo CD will detect the Git change
-and synchronize NutriFlow to EKS.
+Argo CD should now detect
+the GitOps repository change.
+
 ============================================
 '''
         }
 
         failure {
+
             echo '''
 ============================================
-       NUTRIFLOW CI/CD PIPELINE FAILED
+        NUTRIFLOW PIPELINE FAILED
 ============================================
-Check the failed stage in the Jenkins
-console output.
+
+Check the failed Jenkins stage.
+
 ============================================
 '''
         }

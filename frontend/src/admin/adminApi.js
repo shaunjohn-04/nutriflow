@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 
-const ADMIN_BASE_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:8000/nutriflow'}/admin`
+const ADMIN_BASE_URL = `${import.meta.env.VITE_API_URL || '/nutriflow'}/admin`
 
 const adminApi = axios.create({
   baseURL: ADMIN_BASE_URL,

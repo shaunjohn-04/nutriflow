@@ -5,7 +5,7 @@ import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 
 // Base URL for NutriFlow Auth endpoints
-const API_BASE_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:8000/nutriflow'}/auth`
+const API_BASE_URL = `${import.meta.env.VITE_API_URL || '/nutriflow'}/auth`
 
 /**
  * Helper function to fetch profile using token

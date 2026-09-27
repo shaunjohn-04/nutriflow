@@ -10,7 +10,7 @@ terraform {
 }
 
 provider "aws" {
-  region = "ap-south-1"
+  region = "ap-south-2"
 }
 
 # ---------------------------------------------------------
@@ -25,8 +25,8 @@ module "vpc" {
   cidr = "10.0.0.0/16"
 
   azs = [
-    "ap-south-1a",
-    "ap-south-1b"
+    "ap-south-2a",
+    "ap-south-2b"
   ]
 
   private_subnets = [
@@ -57,11 +57,12 @@ module "vpc" {
     Project     = "NutriFlow"
     Environment = "dev"
     ManagedBy   = "Terraform"
+    Owner       = "Shaun"
   }
 }
 
 # ---------------------------------------------------------
-# EKS Cluster
+# EKS
 # ---------------------------------------------------------
 
 module "eks" {
@@ -71,36 +72,20 @@ module "eks" {
   name               = "nutriflow-eks"
   kubernetes_version = "1.33"
 
-  # -------------------------------------------------------
-  # Networking
-  # -------------------------------------------------------
-
   vpc_id = module.vpc.vpc_id
 
   subnet_ids = module.vpc.private_subnets
 
   control_plane_subnet_ids = module.vpc.private_subnets
 
-  # -------------------------------------------------------
-  # API endpoint
-  # -------------------------------------------------------
-
   endpoint_public_access  = true
   endpoint_private_access = true
-
-  # -------------------------------------------------------
-  # IAM / Access
-  # -------------------------------------------------------
 
   enable_irsa = true
 
   enable_cluster_creator_admin_permissions = true
 
   authentication_mode = "API_AND_CONFIG_MAP"
-
-  # -------------------------------------------------------
-  # Cluster security group
-  # -------------------------------------------------------
 
   security_group_additional_rules = {
     ingress_nodes_443 = {
@@ -115,14 +100,6 @@ module "eks" {
 
   # -------------------------------------------------------
   # EKS Add-ons
-  # -------------------------------------------------------
-  # before_compute = true forces vpc-cni, kube-proxy, and
-  # eks-pod-identity-agent to be created BEFORE the managed
-  # node group, breaking the circular dependency where the
-  # node group waits on a working CNI that itself was waiting
-  # on the node group to exist first.
-  # coredns is left without before_compute since its pods
-  # need schedulable nodes to actually run on.
   # -------------------------------------------------------
 
   addons = {
@@ -167,22 +144,15 @@ module "eks" {
 
       subnet_ids = module.vpc.private_subnets
 
-      # ---------------------------------------------------
-      # Node labels
-      # ---------------------------------------------------
-
       labels = {
         Project = "NutriFlow"
       }
-
-      # ---------------------------------------------------
-      # Node tags
-      # ---------------------------------------------------
 
       tags = {
         Project     = "NutriFlow"
         Environment = "dev"
         ManagedBy   = "Terraform"
+        Owner       = "Shaun"
       }
     }
   }
@@ -191,6 +161,7 @@ module "eks" {
     Project     = "NutriFlow"
     Environment = "dev"
     ManagedBy   = "Terraform"
+    Owner       = "Shaun"
   }
 }
 
@@ -212,6 +183,7 @@ resource "aws_ecr_repository" "frontend" {
     Project     = "NutriFlow"
     Environment = "dev"
     ManagedBy   = "Terraform"
+    Owner       = "Shaun"
   }
 }
 
@@ -233,6 +205,7 @@ resource "aws_ecr_repository" "backend" {
     Project     = "NutriFlow"
     Environment = "dev"
     ManagedBy   = "Terraform"
+    Owner       = "Shaun"
   }
 }
 

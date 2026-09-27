@@ -1115,7 +1115,7 @@ const CATEGORY_IMAGES = {
   'Smoothie': 'https://images.unsplash.com/photo-1505252585461-04db1eb84625?w=600&h=400&fit=crop',
 };
 
-const FRONTEND_IMAGE_BASE_URL = process.env.FRONTEND_IMAGE_BASE_URL || 'http://localhost:5173';
+const FRONTEND_IMAGE_BASE_URL = process.env.FRONTEND_IMAGE_BASE_URL || '';
 
 const UPLOADED_IMAGE_FILENAMES = {
   "Apple Cinnamon Overnight Oats": "Apple Cinnamon Overnight Oats.png",
